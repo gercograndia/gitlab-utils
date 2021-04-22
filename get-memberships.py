@@ -83,23 +83,28 @@ def get_user_memberships(group, group_id, user, url, token, verbose):
         else:
             t = '\nGroup'
 
+        print_msgs = []
         if memberships[key]:
             if not user:
                 click.secho(f"{t} {g['name']} with id {g['id']} has the following memberships ==>", bold=True)
-
             for m in memberships[key]:
                 name = f"{m.attributes['name']} ({m.attributes['username']})"
                 all_members.append(name)
                 if not user:
-                    click.secho(f"\t{name} has {ACCESS_LEVELS[m.attributes['access_level']]}.")
+                    print_msgs.append(f"\t{name} has {ACCESS_LEVELS[m.attributes['access_level']]}.")
                 elif user == name:
                     click.secho(f"{t} {g['name']} with id {g['id']} has a matching membership ==>", bold=True, fg="green")
                     click.secho(f"\t{name} has {ACCESS_LEVELS[m.attributes['access_level']]}.")
+
+            # now print all messages in alphabetical order
+            for m in sorted(print_msgs):
+                click.secho(m)
+
         elif verbose:
             click.secho(f"{t} {g['name']} with id {g['id']} does not have {'matching ' if user else ''}memberships")
 
     click.secho('\nTotal list of users in this scope:', bold=True)
-    for m in list(set(all_members)):
+    for m in sorted(list(set(all_members))):
         click.echo(f'\t{m}')
 
 if __name__ == '__main__':
