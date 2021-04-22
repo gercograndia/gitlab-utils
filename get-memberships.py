@@ -35,7 +35,7 @@ def get_user_memberships(group, group_id, user, url, token, verbose):
 
     if group_id:
         base_group = gl.groups.get(group_id)
-        groups_in_scope = [base_group] + base_group.subgroups.list()
+        groups_in_scope = [base_group] + base_group.subgroups.list(all=True)
     elif group:
         # find base group by name
         try:
@@ -56,7 +56,7 @@ def get_user_memberships(group, group_id, user, url, token, verbose):
             click.secho(f"Group name {group} could not be found.", bold=True, fg="red")
             sys.exit(1)
 
-        groups_in_scope = [base_group] + base_group.subgroups.list()
+        groups_in_scope = [base_group] + base_group.subgroups.list(all=True)
 
     memberships = {}
 
@@ -66,12 +66,12 @@ def get_user_memberships(group, group_id, user, url, token, verbose):
             group = gl.groups.get(group.attributes['id'])
     
         # first get memberships on group level
-        memberships[group] = group.members.list()
+        memberships[group] = group.members.list(all=True)
 
         # now get memberships on project level
-        for p in group.projects.list():
+        for p in group.projects.list(all=True):
             project = gl.projects.get(p.attributes['id'])
-            memberships[p] = project.members.list()
+            memberships[p] = project.members.list(all=True)
 
     # Now walk through the members
     all_members = []
