@@ -88,7 +88,7 @@ def get_user_memberships(group, group_id, user, url, token, verbose):
                 click.secho(f"{t} {g['name']} with id {g['id']} has the following memberships ==>", bold=True)
 
             for m in memberships[key]:
-                name = m.attributes['name']
+                name = f"{m.attributes['name']} ({m.attributes['username']})"
                 all_members.append(name)
                 if not user:
                     click.secho(f"\t{name} has {ACCESS_LEVELS[m.attributes['access_level']]}.")
