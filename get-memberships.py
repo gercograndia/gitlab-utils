@@ -5,7 +5,7 @@ import click
 import gitlab
 
 from datetime import datetime
-from gitlab.v4.objects import Group, GroupSubgroup, GroupProject
+from gitlab.v4.objects import GroupSubgroup, GroupProject
 
 ACCESS_LEVELS = {
     10: "Guest access",
@@ -15,11 +15,21 @@ ACCESS_LEVELS = {
     50: "Owner access",
 }
 
+def get_all_groups(gl, group_id):
+    """
+    Recursively get all subgroups of a group.
+    """
+    groups = []
+    for group in gl.groups.get(group_id).subgroups.list():
+        groups.append(group)
+        groups.extend(get_all_groups(gl, group.id))
+    return groups
+
 @click.command()
 @click.option('--group', '-g', required=False, help='Name of group (including subgroups) to check')
 @click.option('--group-id', '-i', required=False, help='ID of group (including subgroups) to check')
 @click.option('--user', '-u', default=None, help='[Optional] Name of user to look up, omit for all users')
-@click.option('--url', '-t', envvar='GITLAB_URL', help='Gitlab url (can be set with environment variable GITLAB_URL)', required=True)
+@click.option('--url', '-U', envvar='GITLAB_URL', help='Gitlab url (can be set with environment variable GITLAB_URL)', required=True)
 @click.option('--token', '-t', envvar='GITLAB_TOKEN', help='Gitlab token (can be set with environment variable GITLAB_TOKEN)', required=True)
 @click.option('--verbose', '-v', is_flag=True, default=False, help='Verbose output ', show_default=True)
 def get_user_memberships(group, group_id, user, url, token, verbose):
@@ -28,14 +38,12 @@ def get_user_memberships(group, group_id, user, url, token, verbose):
 
     # get all groups (you have access to)
     all_groups = gl.groups.list(all=True)
-    groups_in_scope = all_groups
 
     if group_id and group:
         click.secho("Both group and group-id is passed, this redundant, and id will take prevalence.", bold=True)
 
     if group_id:
         base_group = gl.groups.get(group_id)
-        groups_in_scope = [base_group] + base_group.subgroups.list(all=True)
     elif group:
         # find base group by name
         try:
@@ -49,21 +57,29 @@ def get_user_memberships(group, group_id, user, url, token, verbose):
                 sys.exit(1)
 
             base_group = base_groups[0]
+            group_id = base_group.attributes['id']
 
             if verbose:
-                click.secho(f"(Single) Group {group} found!\n", bold=True, fg="green")
+                click.secho(f"(Single) Group {group} with id {base_group.attributes['id']} found!\n", bold=True, fg="green")
         except IndexError as e:
             click.secho(f"Group name {group} could not be found.", bold=True, fg="red")
             sys.exit(1)
 
-        groups_in_scope = [base_group] + base_group.subgroups.list(all=True)
+    # groups_in_scope = [base_group] + get_all_groups(gl, group_id)
+    groups_in_scope = get_all_groups(gl, group_id)
 
     memberships = {}
 
     # now get the members for all groups and projects in scope
     for group in groups_in_scope:
+        if verbose:
+            print(f"Found group {group.name}")
+
         if isinstance(group, GroupSubgroup):
+            # print(f"Group is subgroup: {gl.groups.get(group.attributes['id'])}")
             group = gl.groups.get(group.attributes['id'])
+        # else:
+            # print(f"Group is no subgroup")
     
         # first get memberships on group level
         memberships[group] = group.members.list(all=True)
