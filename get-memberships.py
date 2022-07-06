@@ -5,7 +5,7 @@ import click
 import gitlab
 
 from datetime import datetime
-from gitlab.v4.objects import GroupSubgroup, GroupProject
+from gitlab.v4.objects import GroupSubgroup, GroupProject, GroupMember
 
 ACCESS_LEVELS = {
     10: "Guest access",
@@ -29,10 +29,11 @@ def get_all_groups(gl, group_id):
 @click.option('--group', '-g', required=False, help='Name of group (including subgroups) to check')
 @click.option('--group-id', '-i', required=False, help='ID of group (including subgroups) to check')
 @click.option('--user', '-u', default=None, help='[Optional] Name of user to look up, omit for all users')
+@click.option('--shared-group', '-s', default=None, help='[Optional] Name of a group that has access granted, omit for all groups')
 @click.option('--url', '-U', envvar='GITLAB_URL', help='Gitlab url (can be set with environment variable GITLAB_URL)', required=True)
 @click.option('--token', '-t', envvar='GITLAB_TOKEN', help='Gitlab token (can be set with environment variable GITLAB_TOKEN)', required=True)
 @click.option('--verbose', '-v', is_flag=True, default=False, help='Verbose output ', show_default=True)
-def get_user_memberships(group, group_id, user, url, token, verbose):
+def get_memberships(group, group_id, user, shared_group, url, token, verbose):
     gl = gitlab.Gitlab(url, private_token=token)
     gl.auth()
 
@@ -40,7 +41,7 @@ def get_user_memberships(group, group_id, user, url, token, verbose):
     all_groups = gl.groups.list(all=True)
 
     if group_id and group:
-        click.secho("Both group and group-id is passed, this redundant, and id will take prevalence.", bold=True)
+        click.secho("Both group and group-id is passed, this redundant, and group-id will take prevalence.", bold=True)
 
     if group_id:
         base_group = gl.groups.get(group_id)
@@ -69,6 +70,7 @@ def get_user_memberships(group, group_id, user, url, token, verbose):
     groups_in_scope = get_all_groups(gl, group_id)
 
     memberships = {}
+    shares = {}
 
     # now get the members for all groups and projects in scope
     for group in groups_in_scope:
@@ -76,13 +78,13 @@ def get_user_memberships(group, group_id, user, url, token, verbose):
             print(f"Found group {group.name}")
 
         if isinstance(group, GroupSubgroup):
-            # print(f"Group is subgroup: {gl.groups.get(group.attributes['id'])}")
+            # Group is subgroup
             group = gl.groups.get(group.attributes['id'])
-        # else:
-            # print(f"Group is no subgroup")
     
-        # first get memberships on group level
-        memberships[group] = group.members.list(all=True)
+        # first get user memberships on group level
+        memberships[group] = group.members.list(all=True) + group.shared_with_groups
+        # then see if the group is shared with other groups
+        shares[group] = group.shared_with_groups
 
         # now get memberships on project level
         for p in group.projects.list(all=True):
@@ -101,16 +103,25 @@ def get_user_memberships(group, group_id, user, url, token, verbose):
 
         print_msgs = []
         if memberships[key]:
-            if not user:
+            if not (user or shared_group):
                 click.secho(f"{t} {g['name']} with id {g['id']} has the following memberships ==>", bold=True)
             for m in memberships[key]:
-                name = f"{m.attributes['name']} ({m.attributes['username']})"
+                # do we have a user membership or a group share?
+                if isinstance(m, GroupMember):
+                    name = m.attributes['username']
+                    full_name = f"{m.attributes['name']} ({name})"
+                    access_level = ACCESS_LEVELS[m.attributes['access_level']]
+                elif isinstance(m, dict):
+                    name = m.get('group_name')
+                    full_name = f"{m.get('group_name')} ({name})"
+                    access_level = ACCESS_LEVELS[m.get('group_access_level')]
+
                 all_members.append(name)
-                if not user:
-                    print_msgs.append(f"\t{name} has {ACCESS_LEVELS[m.attributes['access_level']]}.")
-                elif user == name:
+                if (user and user == name) or (shared_group and shared_group == name):
                     click.secho(f"{t} {g['name']} with id {g['id']} has a matching membership ==>", bold=True, fg="green")
-                    click.secho(f"\t{name} has {ACCESS_LEVELS[m.attributes['access_level']]}.")
+                    click.secho(f"\t{full_name} has {access_level}.")
+                elif not (user or shared_group):
+                    print_msgs.append(f"\t{full_name} has {access_level}.")
 
             # now print all messages in alphabetical order
             for m in sorted(print_msgs):
@@ -119,9 +130,9 @@ def get_user_memberships(group, group_id, user, url, token, verbose):
         elif verbose:
             click.secho(f"{t} {g['name']} with id {g['id']} does not have {'matching ' if user else ''}memberships")
 
-    click.secho('\nTotal list of users in this scope:', bold=True)
+    click.secho('\nTotal list of users / shared groups in this scope:', bold=True)
     for m in sorted(list(set(all_members))):
         click.echo(f'\t{m}')
 
 if __name__ == '__main__':
-    get_user_memberships()
+    get_memberships()
