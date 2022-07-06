@@ -113,7 +113,7 @@ def get_memberships(group, group_id, user, shared_group, url, token, verbose):
                     access_level = ACCESS_LEVELS[m.attributes['access_level']]
                 elif isinstance(m, dict):
                     name = m.get('group_name')
-                    full_name = f"{m.get('group_name')} ({name})"
+                    full_name = f"{name} ({m.get('group_full_path')})"
                     access_level = ACCESS_LEVELS[m.get('group_access_level')]
 
                 all_members.append(name)
