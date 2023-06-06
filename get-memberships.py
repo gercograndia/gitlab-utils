@@ -39,6 +39,7 @@ def get_memberships(group, group_id, user, shared_group, url, token, verbose):
 
     # get all groups (you have access to)
     all_groups = gl.groups.list(all=True)
+    print(f"all groups: {all_groups}")
 
     if group_id and group:
         click.secho("Both group and group-id is passed, this redundant, and group-id will take prevalence.", bold=True)
@@ -66,8 +67,8 @@ def get_memberships(group, group_id, user, shared_group, url, token, verbose):
             click.secho(f"Group name {group} could not be found.", bold=True, fg="red")
             sys.exit(1)
 
-    # groups_in_scope = [base_group] + get_all_groups(gl, group_id)
-    groups_in_scope = get_all_groups(gl, group_id)
+    groups_in_scope = [base_group] + get_all_groups(gl, group_id)
+    # groups_in_scope = get_all_groups(gl, group_id)
 
     memberships = {}
     shares = {}
@@ -82,9 +83,17 @@ def get_memberships(group, group_id, user, shared_group, url, token, verbose):
             group = gl.groups.get(group.attributes['id'])
     
         # first get user memberships on group level
-        memberships[group] = group.members.list(all=True) + group.shared_with_groups
+        try:
+            memberships[group] = group.members.list(all=True) + group.shared_with_groups
+        except AttributeError:
+            # only subgroups have the 'shared_with_groups' attribute
+            memberships[group] = group.members.list(all=True)
+
         # then see if the group is shared with other groups
-        shares[group] = group.shared_with_groups
+        try:
+            shares[group] = group.shared_with_groups
+        except AttributeError:
+            shares[group] = None
 
         # now get memberships on project level
         for p in group.projects.list(all=True):
