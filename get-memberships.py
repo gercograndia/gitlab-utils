@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 
 import sys
+import json
 import click
 import gitlab
 
-from datetime import datetime
-from gitlab.v4.objects import GroupSubgroup, GroupProject, GroupMember
+from gitlab.v4.objects import GroupSubgroup, GroupProject, GroupMember, ProjectMember
 
 ACCESS_LEVELS = {
     10: "Guest access",
@@ -32,17 +32,25 @@ def get_all_groups(gl, group_id):
 @click.option('--shared-group', '-s', default=None, help='[Optional] Name of a group that has access granted, omit for all groups')
 @click.option('--url', '-U', envvar='GITLAB_URL', help='Gitlab url (can be set with environment variable GITLAB_URL)', required=True)
 @click.option('--token', '-t', envvar='GITLAB_TOKEN', help='Gitlab token (can be set with environment variable GITLAB_TOKEN)', required=True)
-@click.option('--verbose', '-v', is_flag=True, default=False, help='Verbose output ', show_default=True)
-def get_memberships(group, group_id, user, shared_group, url, token, verbose):
+@click.option('--json-output', '-j', is_flag=True, default=False, help='JSON ouput', show_default=True)
+@click.option('--verbose', '-v', is_flag=True, default=False, help='Verbose output', show_default=True)
+def get_memberships(group, group_id, user, shared_group, url, token, json_output, verbose):
     gl = gitlab.Gitlab(url, private_token=token)
     gl.auth()
 
+    # if we want json output, we only sent the json to stdout, the rest to stderr
+    if json_output:
+        print_outputs = sys.stderr
+    else:
+        print_outputs = sys.stdout
+
     # get all groups (you have access to)
     all_groups = gl.groups.list(all=True)
-    print(f"all groups: {all_groups}")
+    if verbose:
+        print(f"all groups: {all_groups}", file=sys.stderr)
 
     if group_id and group:
-        click.secho("Both group and group-id is passed, this redundant, and group-id will take prevalence.", bold=True)
+        print("Both group and group-id is passed, this redundant, and group-id will take prevalence.", file=print_outputs)
 
     if group_id:
         base_group = gl.groups.get(group_id)
@@ -52,19 +60,19 @@ def get_memberships(group, group_id, user, shared_group, url, token, verbose):
             base_groups = [g for g in all_groups if g.attributes['name'] == group]
 
             if len(base_groups) > 1:
-                click.secho(f"Multiple groups with name {group} are found, the group name must be unique!", fg="red")
+                print(f"Multiple groups with name {group} are found, the group name must be unique!", file=print_outputs)
                 if verbose:
                     for g in base_groups:
-                        click.echo(f'\t{g.attributes["name"]} with id {g.attributes["id"]}')
+                        print(f'\t{g.attributes["name"]} with id {g.attributes["id"]}', file=sys.stderr)
                 sys.exit(1)
 
             base_group = base_groups[0]
             group_id = base_group.attributes['id']
 
             if verbose:
-                click.secho(f"(Single) Group {group} with id {base_group.attributes['id']} found!\n", bold=True, fg="green")
+                print(f"(Single) Group {group} with id {base_group.attributes['id']} found!\n", file=sys.stderr)
         except IndexError as e:
-            click.secho(f"Group name {group} could not be found.", bold=True, fg="red")
+            print(f"Group name {group} could not be found.", file=print_outputs)
             sys.exit(1)
 
     groups_in_scope = [base_group] + get_all_groups(gl, group_id)
@@ -76,7 +84,7 @@ def get_memberships(group, group_id, user, shared_group, url, token, verbose):
     # now get the members for all groups and projects in scope
     for group in groups_in_scope:
         if verbose:
-            print(f"Found group {group.name}")
+            print(f"Found group {group.name}", file=sys.stderr)
 
         if isinstance(group, GroupSubgroup):
             # Group is subgroup
@@ -100,48 +108,76 @@ def get_memberships(group, group_id, user, shared_group, url, token, verbose):
             project = gl.projects.get(p.attributes['id'])
             memberships[p] = project.members.list(all=True)
 
+
     # Now walk through the members
+    member_dict = {}
     all_members = []
     for key in memberships:
         g = key.attributes
 
-        if isinstance(key, GroupProject):
-            t = 'Project'
-        else:
-            t = '\nGroup'
+        try:
+            if isinstance(key, GroupProject):
+                t = 'Project'
+                path = g['path_with_namespace']
+            else:
+                t = '\nGroup'
+                path = g['full_path']
+        except Exception as e:
+            print('Exception occurred: ', str(e), file=sys.stderr)
+            print('While handling key: ', key, file=sys.stderr)
 
         print_msgs = []
+        member_dict[g['name']] = {}
+        member_dict[g['name']]['type'] = t.strip('\n')
+        member_dict[g['name']]['id'] = g['id']
+        member_dict[g['name']]['members'] = {}
         if memberships[key]:
             if not (user or shared_group):
-                click.secho(f"{t} {g['name']} with id {g['id']} has the following memberships ==>", bold=True)
+                print(f"{t} {g['name']} ({path}) with id {g['id']} has the following memberships ==>", file=print_outputs)
             for m in memberships[key]:
                 # do we have a user membership or a group share?
-                if isinstance(m, GroupMember):
+                if isinstance(m, GroupMember) or isinstance(m, ProjectMember):
+                    type = 'user'
                     name = m.attributes['username']
                     full_name = f"{m.attributes['name']} ({name})"
                     access_level = ACCESS_LEVELS[m.attributes['access_level']]
                 elif isinstance(m, dict):
+                    type = 'group'
                     name = m.get('group_name')
                     full_name = f"{name} ({m.get('group_full_path')})"
                     access_level = ACCESS_LEVELS[m.get('group_access_level')]
+                else:
+                    type = 'unknown'
+                    name = 'unknown'
+                    print('Unknown type: ', m)
+
+                member_dict[g['name']]['members'][name] = {
+                    'type': type,
+                    'full_name': full_name if type != 'unknown' else None,
+                    'access_level': access_level if type != 'unknown' else None,
+                    'details': m if type == 'unknown' else None,
+                }
 
                 all_members.append(name)
                 if (user and user == name) or (shared_group and shared_group == name):
-                    click.secho(f"{t} {g['name']} with id {g['id']} has a matching membership ==>", bold=True, fg="green")
-                    click.secho(f"\t{full_name} has {access_level}.")
+                    print(f"{t} {g['name']} with id {g['id']} has a matching membership ==>", file=print_outputs)
+                    print(f"\t{full_name} has {access_level}.", file=print_outputs)
                 elif not (user or shared_group):
                     print_msgs.append(f"\t{full_name} has {access_level}.")
 
             # now print all messages in alphabetical order
             for m in sorted(print_msgs):
-                click.secho(m)
+                print(m, file=print_outputs)
 
         elif verbose:
-            click.secho(f"{t} {g['name']} with id {g['id']} does not have {'matching ' if user else ''}memberships")
+            print(f"{t} {g['name']} with id {g['id']} does not have {'matching ' if user else ''}memberships", file=print_outputs)
 
-    click.secho('\nTotal list of users / shared groups in this scope:', bold=True)
+    print('\nTotal list of users / shared groups in this scope:', file=print_outputs)
     for m in sorted(list(set(all_members))):
-        click.echo(f'\t{m}')
+        print(f'\t{m}', file=print_outputs)
+
+    if json_output:
+        print(json.dumps(member_dict, indent=2))
 
 if __name__ == '__main__':
     get_memberships()
